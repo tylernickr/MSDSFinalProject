@@ -1,0 +1,137 @@
+---
+title: "Too Many Cooks in the Kitchen"
+author: "Nicholas Tyler"
+date: "April 24, 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE, warning = FALSE)
+```
+
+```{r, include=FALSE}
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(ggplot2)
+library(mlbench)
+```
+
+```{r, include=FALSE}
+connection <- dbConnect(RMySQL::MySQL(), 
+                        db = "github",
+                        password = "")
+```
+## Summary
+
+My project is an analysis of whether or not there is a relationship between how many authors are actively working on a software project and the rate at which bugs are committed to the project. I began with the top 1000 projects based on star ratings on github, and removed projects that were either largely not code based, or were particularly small. Each project was labeled with its primary language, determined by the language which made up the largest percentage of the project on a file count basis. Each commit from each project was labeled as bug or non-bug by a support vector model, trainied on 1000 manually labeled commits. The frequency of bugs on a bug per commit basis was determined for each project, and the results were compared against the authorship size of the project, as well as the number of overall commits.
+
+When bug frequency was compared directly to the authorship score of each project, a test of the null hypothesis failed to provide a significant enough test statistic to reject the null hypothesis. This held true during an additional test where the language of a project was also considered to be a feature for the test. When bug frequency was compared directly to the commit count of each project, a test of the null hypothesis failed to provide a significant enough test statistic to reject the null hypothesis. This held true during an additional test where the language of a project was also considered to be a feature for the test.
+
+Overall, my project did not find significant evidence that there is any relationship for frequency of bugs and either authorship of a project or the total number of commits in that project.
+
+
+## Language Analysis
+
+The graph below describes the distribution of all in scope projects in terms of the primary programing language of each project.
+
+```{r, echo=FALSE}
+languages <- tbl(connection, "project_languages")
+languages <- languages %>%
+              filter(language != "")
+
+lang_stat <- languages %>%
+                group_by(language) %>%
+                summarise(count=n()) %>%
+                filter(count > 10)
+
+ggplot(lang_stat) + 
+  geom_bar(aes(x=reorder(language, -1 * count), y=count, fill=language), stat="identity") + 
+  guides(fill=FALSE) + xlab("Language") + ylab("Frequency")
+```
+
+The overwhelming majority of projects are javascript projects, with a reasonably sized number of java, python, and go projects as well. This graph represents a possible point of improvement in the project, as it is clear the data is biased on a programming language basis.
+
+
+## Commit Analysis
+
+The graph below describes the distribution of bug frequency within the project. The bug frequencies appear to be normally distributed with a mean of roughly .2 or 20 bugs per 100 commits.
+
+```{r, echo=FALSE}
+commits <- tbl(connection, "bug_counts")
+commits <- commits %>%
+            filter(commit_count >= 100) %>%
+            mutate(bug_rate=bug_count/commit_count) %>%
+            left_join(languages, by=c("projectID"))
+
+ggplot(commits) + 
+  geom_histogram(aes(x=bug_rate), bins=50) +
+  xlab("Buggy Commits as % of Commits") +
+  ylab("Project Count")
+```
+
+Below is the same distribution but broken out by programming language. While there are slight differences in the distributions of the languages, most appear to be roughly around the same mean with the exception of typescript. It is worth noting that many of these languages have less than 15 data points contained within their distribution, so differences in mean may just be by chance.
+
+```{r}
+commits_filtered <- commits %>%
+                      filter(language %in% c("js", "java", "py", "go", "h", "html", "rb", "ts", "php", "swift"))
+
+ggplot(commits_filtered) +
+  geom_boxplot(aes(x=language, y=bug_rate)) +
+  xlab("Project Language") + 
+  ylab("Bug %")
+```
+
+## Authorship Relationships
+
+Below is a scatterplot of bug rate against the calculated authorship scores of the projects. A higher authorship score represents more authors on a project. From the visual below, there does not appear to be a relationship between bug rate and authorship score.
+
+```{r, echo=FALSE}
+author_scores <- tbl(connection, "authorship_score")
+project_stats <- commits %>%
+                  left_join(author_scores, by=c("projectID"))
+
+ggplot(project_stats, aes(x=authorshipScore, y=bug_rate)) +
+  geom_point() +
+  geom_smooth(method='lm',formula=y~x) +
+  xlab("Degree of Authorship") +
+  ylab("Bug Rate")
+
+project_stats_filtered <- project_stats %>%
+                      filter(language %in% c("js", "java", "py", "go", "h", "html", "rb", "ts", "php", "swift"))
+```
+
+## Hypothesis testing for Authorship vs Bug Rate
+
+Hypothesis testing summary tables are listed below:
+
+```{r, echo=FALSE}
+model <- lm(bug_rate ~ authorshipScore, data = project_stats)
+summary(model)
+```
+
+```{r, echo=FALSE}
+model <- lm(bug_rate ~ authorshipScore + language, data = project_stats_filtered)
+summary(model)
+```
+
+Neither the hypothesis test with only authorship score not the test which also included project language provided significant evidence for any relationship with the bug rate of the projects. We fail to reject the null hypothesis in both cases.
+
+## Now look at # of commits
+
+Below is a scatterplot of bug rate against the commit counts of the projects. From the visual below, there does not appear to be a relationship between bug rate and commit count score.
+
+```{r, echo=FALSE}
+author_scores <- tbl(connection, "authorship_score")
+project_stats <- commits %>%
+                  left_join(author_scores, by=c("projectID"))
+
+ggplot(project_stats, aes(x=log2(commit_count), y=bug_rate)) +
+  geom_point() +
+  geom_smooth(method='lm',formula=y~x) +
+  xlab("Number of Commits (Log2)") +
+  ylab("Bug Rate")
+
+project_stats_filtered <- project_stats %>%
+                      filter(language %in% c("js", "java", "py", "go", "h", "html", "rb", "ts", "php", "swift"))
+```
